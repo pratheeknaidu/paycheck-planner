@@ -11,10 +11,38 @@ import { signInWithRedirect, getRedirectResult, signOut as firebaseSignOut, onAu
 
 /** Listen for auth state changes. Calls onUser(user) or onUser(null). */
 export function initAuth(onUser) {
-    // Check for redirect result first (returning from Google sign-in)
-    getRedirectResult(auth).catch((e) => console.error("Redirect result error:", e));
+    let redirectChecked = false;
+
+    // Wait for redirect result before reporting null user
+    getRedirectResult(auth)
+        .then((result) => {
+            redirectChecked = true;
+            // If redirect returned a user, onAuthStateChanged will handle it
+        })
+        .catch((e) => {
+            redirectChecked = true;
+            console.error("Redirect result error:", e);
+        });
+
     return onAuthStateChanged(auth, (user) => {
-        onUser(user ? { uid: user.uid, displayName: user.displayName, email: user.email, photoURL: user.photoURL } : null);
+        if (user) {
+            // User is signed in — always report immediately
+            onUser({ uid: user.uid, displayName: user.displayName, email: user.email, photoURL: user.photoURL });
+        } else if (redirectChecked) {
+            // No user AND redirect already checked — truly not signed in
+            onUser(null);
+        } else {
+            // No user but redirect hasn't been checked yet — wait for it
+            const interval = setInterval(() => {
+                if (redirectChecked) {
+                    clearInterval(interval);
+                    // Re-check auth state after redirect resolves
+                    if (!auth.currentUser) {
+                        onUser(null);
+                    }
+                }
+            }, 100);
+        }
     });
 }
 
