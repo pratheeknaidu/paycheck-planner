@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { initAuth, signIn, signOut, loadUserData, saveUserData, subscribeToData } from "./dataService";
 
 // ─── FONTS ───
 const fontLink = "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=DM+Mono:wght@400;500&display=swap";
@@ -17,10 +18,10 @@ const T = {
   radius: "12px", radiusSm: "8px",
 };
 
-// ─── PERSISTENCE ───
+// ─── LOCAL PERSISTENCE (offline fallback) ───
 const STORAGE_KEY = "paycheck-planner-data";
 
-function loadData() {
+function loadLocalData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
@@ -28,7 +29,7 @@ function loadData() {
   return null;
 }
 
-function saveData(data) {
+function saveLocalData(data) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch (e) { /* ignore */ }
@@ -1317,10 +1318,27 @@ function CalendarScreen({ settings, bills }) {
 }
 
 // ─── SCREEN: SETTINGS ───
-function SettingsScreen({ settings, setSettings, onReset }) {
+function SettingsScreen({ settings, setSettings, onReset, user, onSignOut }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ color: T.text, fontSize: 18, fontWeight: 600 }}>Settings</div>
+      {user && (
+        <Card>
+          <div style={{ color: T.textMuted, fontSize: 11, fontWeight: 600, letterSpacing: 0.5, marginBottom: 10 }}>ACCOUNT</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+            {user.photoURL && <img src={user.photoURL} alt="" style={{ width: 36, height: 36, borderRadius: "50%", border: `2px solid ${T.border}` }} />}
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: T.text }}>{user.displayName}</div>
+              <div style={{ fontSize: 11, color: T.textMuted }}>{user.email}</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: T.green }} />
+            <span style={{ fontSize: 11, color: T.green, fontWeight: 600 }}>Synced across devices</span>
+          </div>
+          <Btn color={T.textMuted} onClick={onSignOut}>Sign Out</Btn>
+        </Card>
+      )}
       <Card>
         <Input label="NET PAY (per paycheck)" type="number" value={String(settings.default_net_pay)}
           onChange={v => setSettings(s => ({ ...s, default_net_pay: Number(v) || 0 }))} />
@@ -1333,34 +1351,159 @@ function SettingsScreen({ settings, setSettings, onReset }) {
       <Card>
         <div style={{ color: T.textMuted, fontSize: 11, fontWeight: 600, letterSpacing: 0.5, marginBottom: 8 }}>DATA</div>
         <div style={{ color: T.textDim, fontSize: 12, lineHeight: 1.6, marginBottom: 12 }}>
-          All data is stored in your browser's localStorage. It persists between sessions but is tied to this browser.
+          Data syncs to the cloud via your Google account. A local copy is also kept in your browser.
         </div>
         <Btn color={T.red} onClick={onReset}>Reset All Data</Btn>
       </Card>
       <Card>
         <div style={{ color: T.textMuted, fontSize: 11, fontWeight: 600, letterSpacing: 0.5, marginBottom: 8 }}>ABOUT</div>
         <div style={{ color: T.textDim, fontSize: 12, lineHeight: 1.6 }}>
-          Paycheck Planner v1.0 MVP. Built with React + Vite.
+          Paycheck Planner v2.0. Built with React + Vite + Firebase.
         </div>
       </Card>
     </div>
   );
 }
 
+// ─── LOGIN SCREEN ───
+function LoginScreen({ onSignIn, loading, error }) {
+  return (
+    <>
+      <link href={fontLink} rel="stylesheet" />
+      <style>{`
+        * { box-sizing: border-box; margin: 0; }
+        body { background: ${T.bg}; margin: 0; }
+      `}</style>
+      <div style={{
+        fontFamily: T.font, background: T.bg, color: T.text,
+        minHeight: "100vh", display: "flex", justifyContent: "center", alignItems: "center",
+      }}>
+        <div style={{ width: "100%", maxWidth: 360, padding: "0 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>💰</div>
+          <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 6 }}>Paycheck Planner</div>
+          <div style={{ color: T.textMuted, fontSize: 13, marginBottom: 32, lineHeight: 1.5 }}>
+            Budget paycheck-to-paycheck.<br />Sync across all your devices.
+          </div>
+          <button onClick={onSignIn} disabled={loading} style={{
+            width: "100%", padding: "14px 20px", borderRadius: T.radius,
+            background: loading ? T.surface : "#fff", color: loading ? T.textMuted : "#333",
+            border: `1px solid ${T.border}`, cursor: loading ? "wait" : "pointer",
+            fontFamily: T.font, fontSize: 14, fontWeight: 600,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+            transition: "all 0.15s",
+          }}>
+            <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" /><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" /><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" /><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" /></svg>
+            {loading ? "Signing in..." : "Continue with Google"}
+          </button>
+          {error && <div style={{ color: T.red, fontSize: 12, marginTop: 12 }}>{error}</div>}
+          <div style={{ color: T.textDim, fontSize: 11, marginTop: 24 }}>
+            Your data is stored securely in Firebase and syncs across devices.
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── MAIN APP ───
 export default function App() {
-  const saved = useMemo(() => loadData(), []);
+  // Auth state
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState(null);
+
+  // App data state — initialize from local storage as fallback
+  const saved = useMemo(() => loadLocalData(), []);
   const [settings, setSettings] = useState(saved?.settings || DEFAULT_SETTINGS);
   const [bills, setBills] = useState(saved?.bills || DEFAULT_BILLS);
   const [goals, setGoals] = useState(saved?.goals || DEFAULT_GOALS);
   const [allocations, setAllocations] = useState(saved?.allocations || {});
   const [periodHistory, setPeriodHistory] = useState(saved?.periodHistory || []);
   const [screen, setScreen] = useState("dashboard");
+  const [dataLoaded, setDataLoaded] = useState(false);
 
-  // Persist on every change
+  // Guard to prevent save loops from remote sync updates
+  const skipNextSave = useRef(false);
+  const isInitialLoad = useRef(true);
+
+  // Listen for auth state changes
   useEffect(() => {
-    saveData({ settings, bills, goals, allocations, periodHistory });
+    const unsub = initAuth((u) => {
+      setUser(u);
+      setAuthLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  // Load data from Firestore when user signs in, then subscribe to real-time updates
+  useEffect(() => {
+    if (!user) { setDataLoaded(false); isInitialLoad.current = true; return; }
+
+    let unsubscribe = null;
+
+    (async () => {
+      // Load initial data from Firestore
+      const remote = await loadUserData(user.uid);
+      if (remote) {
+        skipNextSave.current = true;
+        setSettings(remote.settings || DEFAULT_SETTINGS);
+        setBills(remote.bills || DEFAULT_BILLS);
+        setGoals(remote.goals || DEFAULT_GOALS);
+        setAllocations(remote.allocations || {});
+        setPeriodHistory(remote.periodHistory || []);
+      } else {
+        // First sign-in: push local data to Firestore
+        await saveUserData(user.uid, { settings, bills, goals, allocations, periodHistory });
+      }
+      setDataLoaded(true);
+      isInitialLoad.current = false;
+
+      // Subscribe to real-time changes (cross-device sync)
+      unsubscribe = subscribeToData(user.uid, (data) => {
+        if (data) {
+          skipNextSave.current = true;
+          setSettings(data.settings || DEFAULT_SETTINGS);
+          setBills(data.bills || DEFAULT_BILLS);
+          setGoals(data.goals || DEFAULT_GOALS);
+          setAllocations(data.allocations || {});
+          setPeriodHistory(data.periodHistory || []);
+        }
+      });
+    })();
+
+    return () => { if (unsubscribe) unsubscribe(); };
+  }, [user]);
+
+  // Persist on every change — to both Firestore and localStorage
+  useEffect(() => {
+    if (isInitialLoad.current) return;
+    const data = { settings, bills, goals, allocations, periodHistory };
+    saveLocalData(data); // always save locally
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
+      return;
+    }
+    if (user) {
+      saveUserData(user.uid, data);
+    }
   }, [settings, bills, goals, allocations, periodHistory]);
+
+  const handleSignIn = async () => {
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      await signIn();
+    } catch (e) {
+      setAuthError(e.message || "Sign-in failed. Please try again.");
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+    setUser(null);
+    setScreen("dashboard");
+  };
 
   const handleReset = () => {
     if (window.confirm("Reset all data to defaults? This cannot be undone.")) {
@@ -1372,6 +1515,42 @@ export default function App() {
       localStorage.removeItem(STORAGE_KEY);
     }
   };
+
+  // Show login screen if not authenticated
+  if (authLoading) {
+    return (
+      <>
+        <link href={fontLink} rel="stylesheet" />
+        <style>{`* { box-sizing: border-box; margin: 0; } body { background: ${T.bg}; margin: 0; }`}</style>
+        <div style={{ fontFamily: T.font, background: T.bg, color: T.text, minHeight: "100vh", display: "flex", justifyContent: "center", alignItems: "center" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>💰</div>
+            <div style={{ color: T.textMuted, fontSize: 13 }}>Loading...</div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (!user) {
+    return <LoginScreen onSignIn={handleSignIn} loading={authLoading} error={authError} />;
+  }
+
+  // Show loading while data is being fetched from Firestore
+  if (!dataLoaded) {
+    return (
+      <>
+        <link href={fontLink} rel="stylesheet" />
+        <style>{`* { box-sizing: border-box; margin: 0; } body { background: ${T.bg}; margin: 0; }`}</style>
+        <div style={{ fontFamily: T.font, background: T.bg, color: T.text, minHeight: "100vh", display: "flex", justifyContent: "center", alignItems: "center" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>💰</div>
+            <div style={{ color: T.textMuted, fontSize: 13 }}>Syncing your data...</div>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   const screens = {
     dashboard: { icon: "📊", label: "Payday" },
@@ -1404,7 +1583,7 @@ export default function App() {
             borderBottom: `1px solid ${T.border}`,
           }}>
             <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: -0.3 }}>Paycheck Planner</div>
-            <Badge text="v1.0" color={T.accent} bg={T.accentDim} />
+            <Badge text="v2.0" color={T.accent} bg={T.accentDim} />
           </div>
 
           <div style={{ padding: "16px 18px 20px" }}>
@@ -1412,7 +1591,7 @@ export default function App() {
             {screen === "bills" && <BillsScreen bills={bills} setBills={setBills} />}
             {screen === "savings" && <SavingsScreen goals={goals} setGoals={setGoals} />}
             {screen === "calendar" && <CalendarScreen settings={settings} bills={bills} />}
-            {screen === "settings" && <SettingsScreen settings={settings} setSettings={setSettings} onReset={handleReset} />}
+            {screen === "settings" && <SettingsScreen settings={settings} setSettings={setSettings} onReset={handleReset} user={user} onSignOut={handleSignOut} />}
           </div>
 
           <div style={{
