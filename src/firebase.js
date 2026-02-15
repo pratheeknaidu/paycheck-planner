@@ -1,17 +1,18 @@
 // ─── Firebase Initialization ───
-// Config values come from environment variables (set in .env.local)
 
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
+// Firebase config is public by design — security is enforced
+// via Firestore rules + Auth, not by hiding these values.
 const firebaseConfig = {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-    appId: import.meta.env.VITE_FIREBASE_APP_ID,
+    apiKey: "AIzaSyCmrJ6O2xbQ9Bx9mk2JHuPlVvdrBqURTi0",
+    authDomain: "paycheck-planner-4e387.firebaseapp.com",
+    projectId: "paycheck-planner-4e387",
+    storageBucket: "paycheck-planner-4e387.firebasestorage.app",
+    messagingSenderId: "789503116835",
+    appId: "1:789503116835:web:86773d2064938800255396",
 };
 
 const app = initializeApp(firebaseConfig);
