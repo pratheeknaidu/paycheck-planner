@@ -5,20 +5,22 @@
 
 import { db, auth, googleProvider } from "./firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
-import { signInWithPopup, signOut as firebaseSignOut, onAuthStateChanged } from "firebase/auth";
+import { signInWithRedirect, getRedirectResult, signOut as firebaseSignOut, onAuthStateChanged } from "firebase/auth";
 
 // ─── AUTH ───
 
 /** Listen for auth state changes. Calls onUser(user) or onUser(null). */
 export function initAuth(onUser) {
+    // Check for redirect result first (returning from Google sign-in)
+    getRedirectResult(auth).catch((e) => console.error("Redirect result error:", e));
     return onAuthStateChanged(auth, (user) => {
         onUser(user ? { uid: user.uid, displayName: user.displayName, email: user.email, photoURL: user.photoURL } : null);
     });
 }
 
-/** Sign in with Google popup. */
+/** Sign in with Google (full-page redirect — no iframes). */
 export async function signIn() {
-    return signInWithPopup(auth, googleProvider);
+    return signInWithRedirect(auth, googleProvider);
 }
 
 /** Sign out. */
