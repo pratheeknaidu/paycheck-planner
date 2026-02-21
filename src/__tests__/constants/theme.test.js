@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import T, { FONT_LINK } from "../constants/theme";
+import T, { FONT_LINK } from "../../constants/theme";
 
 describe("theme tokens", () => {
     it("exports a default object with color tokens", () => {

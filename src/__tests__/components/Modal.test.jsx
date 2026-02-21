@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import Modal from "../components/Modal";
+import Modal from "../../components/Modal";
 
 describe("Modal", () => {
     it("renders children when open", () => {

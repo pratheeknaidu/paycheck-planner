@@ -4,7 +4,7 @@ import {
     getPayPeriods, billFallsInPeriod,
     validateBillForm, validateGoalForm,
     debounce,
-} from "../utils/helpers";
+} from "../../utils/helpers";
 
 // ─── uuid ───
 describe("uuid", () => {

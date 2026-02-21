@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import ErrorBoundary from "../components/ErrorBoundary";
+import ErrorBoundary from "../../components/ErrorBoundary";
 
 function ThrowingComponent({ shouldThrow = true }) {
     if (shouldThrow) throw new Error("Test error");

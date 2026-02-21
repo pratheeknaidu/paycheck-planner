@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock Firebase to prevent initialization
-vi.mock("../firebase", () => ({
+vi.mock("../../firebase", () => ({
     db: "mock-db",
     auth: "mock-auth",
     googleProvider: "mock-provider",
@@ -23,7 +23,7 @@ vi.mock("firebase/auth", () => ({
 vi.mock("firebase/app", () => ({
     initializeApp: vi.fn(),
 }));
-vi.mock("../dataService", () => ({
+vi.mock("../../dataService", () => ({
     initAuth: vi.fn((cb) => { cb(null); return vi.fn(); }),
     signIn: vi.fn(),
     signOut: vi.fn(),
@@ -33,8 +33,8 @@ vi.mock("../dataService", () => ({
 }));
 
 import { renderHook, act } from "@testing-library/react";
-import { AppProvider, useApp } from "../context/AppContext";
-import { DEFAULT_SETTINGS, DEFAULT_BILLS, DEFAULT_GOALS } from "../constants/defaults";
+import { AppProvider, useApp } from "../../context/AppContext";
+import { DEFAULT_SETTINGS, DEFAULT_BILLS, DEFAULT_GOALS } from "../../constants/defaults";
 
 function wrapper({ children }) {
     return <AppProvider>{children}</AppProvider>;

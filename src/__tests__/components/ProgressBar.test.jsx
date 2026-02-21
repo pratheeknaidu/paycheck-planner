@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
-import ProgressBar from "../components/ProgressBar";
+import ProgressBar from "../../components/ProgressBar";
 
 describe("ProgressBar", () => {
     it("renders with correct width percentage", () => {

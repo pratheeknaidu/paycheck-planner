@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Need to mock the entire firebase module chain
-vi.mock("../firebase", () => ({
+vi.mock("../../firebase", () => ({
     db: "mock-db",
     auth: "mock-auth",
     googleProvider: "mock-provider",
@@ -30,7 +30,7 @@ vi.mock("firebase/app", () => ({
 
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { signInWithPopup, signOut as firebaseSignOut, onAuthStateChanged } from "firebase/auth";
-import { initAuth, signIn, signOut, loadUserData, saveUserData, subscribeToData } from "../dataService";
+import { initAuth, signIn, signOut, loadUserData, saveUserData, subscribeToData } from "../../dataService";
 
 describe("dataService", () => {
     beforeEach(() => {

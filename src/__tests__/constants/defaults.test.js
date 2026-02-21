@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_SETTINGS, DEFAULT_BILLS, DEFAULT_GOALS, STORAGE_KEY } from "../constants/defaults";
+import { DEFAULT_SETTINGS, DEFAULT_BILLS, DEFAULT_GOALS, STORAGE_KEY } from "../../constants/defaults";
 
 describe("DEFAULT_SETTINGS", () => {
     it("has a static ID", () => {

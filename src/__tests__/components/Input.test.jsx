@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import Input from "../components/Input";
+import Input from "../../components/Input";
 
 describe("Input", () => {
     it("renders with a label", () => {
