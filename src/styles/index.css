@@ -1,0 +1,47 @@
+/* ─── GLOBAL STYLES ─── */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+}
+
+body {
+    background: #0F1117;
+    margin: 0;
+}
+
+/* Hide number input spinners */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 4px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #252836;
+    border-radius: 4px;
+}
+
+/* Focus-visible outline for keyboard navigation */
+:focus-visible {
+    outline: 2px solid #6C9CFC;
+    outline-offset: 2px;
+}
+
+button:focus:not(:focus-visible) {
+    outline: none;
+}
