@@ -1,59 +1,42 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useApp } from "../context/AppContext";
+import { usePeriodCalculations } from "../hooks/usePeriodCalculations";
+import { useAllocationActions } from "../hooks/useAllocationActions";
 import T from "../constants/theme";
-import { fmt, pct, getPayPeriods, billFallsInPeriod } from "../utils/helpers";
+import { fmt, pct } from "../utils/helpers";
 import Card from "../components/Card";
 import Badge from "../components/Badge";
 import ProgressBar from "../components/ProgressBar";
 import Btn from "../components/Btn";
 import Input from "../components/Input";
 import Modal from "../components/Modal";
+import ActionMenu from "../components/ActionMenu";
 
 export default function DashboardScreen() {
-    const { settings, bills, goals, allocations, setAllocations, periodHistory, setPeriodHistory } = useApp();
+    const { settings, bills, goals, allocations, setAllocations, periodHistory } = useApp();
 
-    const periods = useMemo(() => getPayPeriods(settings.first_pay_date, 6), [settings.first_pay_date]);
-    const currentPeriod = periods.find((p) => p.isCurrent) || periods[2];
-    const currentIdx = periods.indexOf(currentPeriod);
-    const nextPeriod = currentIdx < periods.length - 1 ? periods[currentIdx + 1] : null;
+    const calc = usePeriodCalculations();
+    const {
+        currentPeriod, nextPeriod,
+        periodKey, nextPeriodKey,
+        periodAlloc, nextPeriodAlloc,
+        basePeriodBills, baseNextPeriodBills,
+        periodBills, displayNextPeriodBills,
+        billsTotal, savingsTotal, adjustments, adjustmentsTotal,
+        netPay, hasPayOverride, remaining, isOver,
+        paidCount, isClosed, nextBillsTotal,
+    } = calc;
 
-    const periodKey = currentPeriod.start.toISOString().slice(0, 10);
-    const nextPeriodKey = nextPeriod ? nextPeriod.start.toISOString().slice(0, 10) : null;
-    const periodAlloc = allocations[periodKey] || {};
-    const nextPeriodAlloc = nextPeriodKey ? allocations[nextPeriodKey] || {} : {};
-
-    // Base bills for each period (before split/defer/payEarly adjustments)
-    const basePeriodBills = useMemo(
-        () => bills.filter((b) => b.is_active && billFallsInPeriod(b, currentPeriod.start, currentPeriod.end)),
-        [bills, currentPeriod],
-    );
-
-    const baseNextPeriodBills = useMemo(
-        () => (nextPeriod ? bills.filter((b) => b.is_active && billFallsInPeriod(b, nextPeriod.start, nextPeriod.end)) : []),
-        [bills, nextPeriod],
-    );
-
-    // Effective current period bills: exclude deferred, include paidEarly from next period
-    const paidEarlyBills = baseNextPeriodBills.filter((b) => periodAlloc[b.id]?.paidEarly);
-    const periodBills = useMemo(() => {
-        const nonDeferred = basePeriodBills.filter((b) => !periodAlloc[b.id]?.deferred);
-        const extras = paidEarlyBills.filter((b) => !nonDeferred.some((nb) => nb.id === b.id));
-        return [...nonDeferred, ...extras];
-    }, [basePeriodBills, periodAlloc, paidEarlyBills]);
-
-    // Effective next period bills: exclude paidEarly, include deferred + split remainders
-    const deferredBills = basePeriodBills.filter((b) => periodAlloc[b.id]?.deferred);
-    const splitBills = basePeriodBills.filter((b) => periodAlloc[b.id]?.splitAmount != null);
-    const displayNextPeriodBills = useMemo(() => {
-        const nonPaidEarly = baseNextPeriodBills.filter(
-            (b) => !(periodAlloc[b.id]?.paidEarly && periodAlloc[b.id]?.prepayAmount == null),
-        );
-        const deferredExtras = deferredBills.filter((b) => !nonPaidEarly.some((nb) => nb.id === b.id));
-        const splitExtras = splitBills.filter(
-            (b) => !nonPaidEarly.some((nb) => nb.id === b.id) && !deferredBills.some((db) => db.id === b.id),
-        );
-        return [...nonPaidEarly, ...deferredExtras, ...splitExtras];
-    }, [baseNextPeriodBills, periodAlloc, deferredBills, splitBills]);
+    const actions = useAllocationActions(periodKey);
+    const {
+        togglePaid, updateActual,
+        deferBill, undoDefer,
+        splitBill, undoSplit,
+        payEarly, undoPayEarly,
+        addAdjustment, removeAdjustment,
+        setNetPayOverride,
+        closePeriod, reopenPeriod,
+    } = actions;
 
     // Init allocations for base period bills
     useEffect(() => {
@@ -83,211 +66,6 @@ export default function DashboardScreen() {
         });
         if (changed) setAllocations((prev) => ({ ...prev, [nextPeriodKey]: updated }));
     }, [baseNextPeriodBills, nextPeriodKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // ─── TOTALS ───
-    const getBillAmount = (bill) => {
-        const a = periodAlloc[bill.id];
-        if (!a) return bill.amount;
-        if (a.deferred) return 0;
-        if (a.splitAmount != null) return a.splitAmount;
-        if (a.paidEarly && a.prepayAmount != null) return a.prepayAmount;
-        return a.actual ?? a.planned ?? bill.amount;
-    };
-
-    const billsTotal = periodBills.reduce((s, b) => s + getBillAmount(b), 0);
-    const savingsTotal = goals.filter((g) => g.is_active).reduce((s, g) => s + g.per_check_amount, 0);
-    const adjustments = periodAlloc._adjustments || [];
-    const adjustmentsTotal = adjustments.reduce((s, a) => s + a.amount, 0);
-    const netPay = periodAlloc._netPayOverride ?? settings.default_net_pay;
-    const hasPayOverride = periodAlloc._netPayOverride != null;
-    const remaining = netPay - billsTotal - savingsTotal + adjustmentsTotal;
-    const isOver = remaining < 0;
-    const paidCount = periodBills.filter((b) => periodAlloc[b.id]?.paid).length;
-    const isClosed = !!periodAlloc._closed;
-
-    // Next period totals
-    const getNextBillAmount = (bill) => {
-        const a = periodAlloc[bill.id];
-        if (a?.paidEarly && a?.prepayAmount == null) return 0;
-        if (a?.paidEarly && a?.prepayAmount != null) {
-            const na = nextPeriodAlloc[bill.id];
-            const base = na?.actual != null ? Number(na.actual) : bill.amount;
-            return base - a.prepayAmount;
-        }
-        if (a?.deferred) return bill.amount;
-        if (a?.splitAmount != null) return bill.amount - a.splitAmount;
-        const na = nextPeriodAlloc[bill.id];
-        if (na?.actual != null) return na.actual;
-        return bill.amount;
-    };
-    const nextBillsTotal = displayNextPeriodBills.reduce((s, b) => s + getNextBillAmount(b), 0);
-
-    // ─── ACTIONS ───
-    const togglePaid = (billId, targetPK = periodKey) => {
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[targetPK] || {}) };
-            pa[billId] = { ...pa[billId], paid: !pa[billId]?.paid };
-            pk[targetPK] = pa;
-            return pk;
-        });
-    };
-
-    const updateActual = (billId, val, targetPK = periodKey) => {
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[targetPK] || {}) };
-            pa[billId] = { ...pa[billId], actual: val === "" ? null : Number(val) };
-            pk[targetPK] = pa;
-            return pk;
-        });
-    };
-
-    const deferBill = (billId, targetPK = periodKey) => {
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[targetPK] || {}) };
-            pa[billId] = { ...pa[billId], deferred: true, paid: false, splitAmount: undefined };
-            pk[targetPK] = pa;
-            return pk;
-        });
-    };
-
-    const undoDefer = (billId, targetPK = periodKey) => {
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[targetPK] || {}) };
-            pa[billId] = { ...pa[billId], deferred: false };
-            pk[targetPK] = pa;
-            return pk;
-        });
-    };
-
-    const splitBill = (billId, splitAmount, targetPK = periodKey) => {
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[targetPK] || {}) };
-            pa[billId] = { ...pa[billId], splitAmount: Number(splitAmount), deferred: false };
-            pk[targetPK] = pa;
-            return pk;
-        });
-    };
-
-    const undoSplit = (billId, targetPK = periodKey) => {
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[targetPK] || {}) };
-            const updated = { ...pa[billId] };
-            delete updated.splitAmount;
-            pa[billId] = updated;
-            pk[targetPK] = pa;
-            return pk;
-        });
-    };
-
-    const payEarly = (billId, bill, prepayAmount = null) => {
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[periodKey] || {}) };
-            const entry = { planned: bill.amount, actual: bill.bill_type === "fixed" ? bill.amount : null, paid: false, paidEarly: true };
-            if (prepayAmount != null && prepayAmount < bill.amount) {
-                entry.prepayAmount = Number(prepayAmount);
-                entry.actual = Number(prepayAmount);
-            }
-            pa[billId] = entry;
-            pk[periodKey] = pa;
-            return pk;
-        });
-    };
-
-    const undoPayEarly = (billId) => {
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[periodKey] || {}) };
-            const updated = { ...pa[billId] };
-            delete updated.paidEarly;
-            delete updated.prepayAmount;
-            delete updated.actual;
-            delete updated.planned;
-            pa[billId] = updated;
-            pk[periodKey] = pa;
-            return pk;
-        });
-    };
-
-    // ─── ADJUSTMENTS ───
-    const addAdjustment = (label, amount) => {
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[periodKey] || {}) };
-            const adjs = [...(pa._adjustments || []), { id: Date.now().toString(), label, amount }];
-            pa._adjustments = adjs;
-            pk[periodKey] = pa;
-            return pk;
-        });
-    };
-
-    const removeAdjustment = (adjId) => {
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[periodKey] || {}) };
-            pa._adjustments = (pa._adjustments || []).filter((a) => a.id !== adjId);
-            pk[periodKey] = pa;
-            return pk;
-        });
-    };
-
-    // ─── NET PAY OVERRIDE ───
-    const setNetPayOverride = (val) => {
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[periodKey] || {}) };
-            if (val === "" || val == null) {
-                delete pa._netPayOverride;
-            } else {
-                pa._netPayOverride = Number(val);
-            }
-            pk[periodKey] = pa;
-            return pk;
-        });
-    };
-
-    // ─── CLOSE / REOPEN PERIOD ───
-    const closePeriod = () => {
-        const entry = {
-            periodKey,
-            label: currentPeriod.label,
-            closedAt: new Date().toISOString(),
-            netPay,
-            billsTotal,
-            savingsGoalsTotal: savingsTotal,
-            adjustmentsTotal,
-            adjustments: [...adjustments],
-            saved: remaining,
-        };
-        setPeriodHistory((prev) => {
-            const filtered = prev.filter((h) => h.periodKey !== periodKey);
-            return [...filtered, entry].sort((a, b) => a.periodKey.localeCompare(b.periodKey));
-        });
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[periodKey] || {}) };
-            pa._closed = true;
-            pk[periodKey] = pa;
-            return pk;
-        });
-    };
-
-    const reopenPeriod = () => {
-        setPeriodHistory((prev) => prev.filter((h) => h.periodKey !== periodKey));
-        setAllocations((prev) => {
-            const pk = { ...prev };
-            const pa = { ...(pk[periodKey] || {}) };
-            delete pa._closed;
-            pk[periodKey] = pa;
-            return pk;
-        });
-    };
 
     // ─── LOCAL UI STATE ───
     const [editingNetPay, setEditingNetPay] = useState(false);
@@ -320,105 +98,9 @@ export default function DashboardScreen() {
         }
     };
 
-    // ─── ACTION BUTTON COMPONENT ───
-    const ActionDot = ({ billId, bill, isDeferrable = true, targetPK = periodKey, targetAlloc = periodAlloc }) => {
-        const alloc = targetAlloc[billId] || {};
-        const isMenuOpen = actionMenu === billId;
-        const hasSplit = alloc.splitAmount != null;
-        const isDeferred = alloc.deferred;
-
-        if (isDeferred) {
-            return (
-                <button
-                    onClick={() => undoDefer(billId, targetPK)}
-                    aria-label={`Undo defer for ${bill.name}`}
-                    style={{
-                        color: T.amber, fontSize: 10, cursor: "pointer", padding: "2px 8px",
-                        background: T.amberDim, borderRadius: 12, fontWeight: 600, fontFamily: T.font,
-                        border: "none",
-                    }}
-                >
-                    DEFERRED ↩
-                </button>
-            );
-        }
-        if (hasSplit) {
-            return (
-                <button
-                    onClick={() => undoSplit(billId, targetPK)}
-                    aria-label={`Undo split for ${bill.name}`}
-                    style={{
-                        color: T.purple, fontSize: 10, cursor: "pointer", padding: "2px 8px",
-                        background: T.purpleDim, borderRadius: 12, fontWeight: 600, fontFamily: T.font,
-                        border: "none",
-                    }}
-                >
-                    SPLIT ↩
-                </button>
-            );
-        }
-
-        return (
-            <div style={{ position: "relative" }}>
-                <button
-                    onClick={(e) => { e.stopPropagation(); setActionMenu(isMenuOpen ? null : billId); }}
-                    aria-label={`Actions for ${bill.name}`}
-                    aria-expanded={isMenuOpen}
-                    style={{
-                        color: T.textDim, fontSize: 18, cursor: "pointer", padding: "0 4px",
-                        lineHeight: 1, userSelect: "none", background: "none", border: "none",
-                    }}
-                >
-                    ⋯
-                </button>
-                {isMenuOpen && (
-                    <div
-                        onClick={(e) => e.stopPropagation()}
-                        role="menu"
-                        style={{
-                            position: "absolute", right: 0, top: 24, zIndex: 10,
-                            background: T.card, border: `1px solid ${T.border}`, borderRadius: T.radiusSm,
-                            padding: 4, minWidth: 110, boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
-                        }}
-                    >
-                        <button
-                            role="menuitem"
-                            onClick={() => openSplit(bill, targetPK, targetAlloc)}
-                            style={{
-                                display: "block", width: "100%", textAlign: "left",
-                                padding: "8px 12px", fontSize: 12, color: T.purple, cursor: "pointer",
-                                borderRadius: 6, fontWeight: 500, background: "transparent", border: "none",
-                                fontFamily: T.font,
-                            }}
-                            onMouseEnter={(e) => (e.target.style.background = T.purpleDim)}
-                            onMouseLeave={(e) => (e.target.style.background = "transparent")}
-                        >
-                            ✂️ Split
-                        </button>
-                        {isDeferrable && (
-                            <button
-                                role="menuitem"
-                                onClick={() => { deferBill(billId, targetPK); setActionMenu(null); }}
-                                style={{
-                                    display: "block", width: "100%", textAlign: "left",
-                                    padding: "8px 12px", fontSize: 12, color: T.amber, cursor: "pointer",
-                                    borderRadius: 6, fontWeight: 500, background: "transparent", border: "none",
-                                    fontFamily: T.font,
-                                }}
-                                onMouseEnter={(e) => (e.target.style.background = T.amberDim)}
-                                onMouseLeave={(e) => (e.target.style.background = "transparent")}
-                            >
-                                ⏩ Defer
-                            </button>
-                        )}
-                    </div>
-                )}
-            </div>
-        );
-    };
-
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }} onClick={() => setActionMenu(null)}>
+            {/* ─── NET PAY HEADER ─── */}
             <div style={{ textAlign: "center", padding: "4px 0" }}>
                 <div style={{ color: T.textMuted, fontSize: 12 }}>{currentPeriod.label}</div>
                 {editingNetPay ? (
@@ -505,6 +187,7 @@ export default function DashboardScreen() {
                 </div>
             </div>
 
+            {/* ─── ALLOCATION SUMMARY ─── */}
             <Card>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
                     <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 600, letterSpacing: 0.5 }}>ALLOCATION</span>
@@ -534,6 +217,7 @@ export default function DashboardScreen() {
                 </div>
             </Card>
 
+            {/* ─── OVER BUDGET WARNING ─── */}
             {!isClosed && isOver && (
                 <Card style={{ border: "1px solid rgba(248,113,113,0.3)", background: T.redDim }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }} role="alert">
@@ -546,6 +230,7 @@ export default function DashboardScreen() {
                 </Card>
             )}
 
+            {/* ─── CLOSED PERIOD SUMMARY ─── */}
             {isClosed ? (
                 <Card style={{ border: `1px solid ${T.greenDim}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -592,6 +277,7 @@ export default function DashboardScreen() {
                 </Card>
             ) : (
                 <>
+                    {/* ─── BILLS THIS PERIOD ─── */}
                     <Card>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                             <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 600, letterSpacing: 0.5 }}>BILLS THIS PERIOD</span>
@@ -656,7 +342,19 @@ export default function DashboardScreen() {
                                                     background: T.border, borderRadius: 10, fontWeight: 500, fontFamily: T.font, border: "none",
                                                 }}>↩</button>
                                         )}
-                                        {!isPaidEarly && !isDeferred && <ActionDot billId={bill.id} bill={bill} />}
+                                        {!isPaidEarly && !isDeferred && (
+                                            <ActionMenu
+                                                billId={bill.id}
+                                                bill={bill}
+                                                alloc={alloc}
+                                                onOpenSplit={openSplit}
+                                                onDefer={deferBill}
+                                                onUndoDefer={undoDefer}
+                                                onUndoSplit={undoSplit}
+                                                actionMenu={actionMenu}
+                                                setActionMenu={setActionMenu}
+                                            />
+                                        )}
                                         {isDeferred && (
                                             <button onClick={() => undoDefer(bill.id)} aria-label={`Undo defer for ${bill.name}`}
                                                 style={{
@@ -681,7 +379,7 @@ export default function DashboardScreen() {
                         {periodBills.length > 0 && (
                             <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
                                 <button
-                                    onClick={closePeriod}
+                                    onClick={() => closePeriod(currentPeriod, netPay, billsTotal, savingsTotal, adjustmentsTotal, adjustments, remaining)}
                                     style={{
                                         width: "100%", padding: "10px 0", border: "none", borderRadius: T.radiusSm,
                                         background: T.greenDim, color: T.green, fontSize: 13, fontWeight: 600,
@@ -696,6 +394,7 @@ export default function DashboardScreen() {
                         )}
                     </Card>
 
+                    {/* ─── ADJUSTMENTS ─── */}
                     <Card>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: adjustments.length > 0 || showAdjForm ? 10 : 0 }}>
                             <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 600, letterSpacing: 0.5 }}>ADJUSTMENTS</span>
@@ -769,6 +468,7 @@ export default function DashboardScreen() {
                         )}
                     </Card>
 
+                    {/* ─── SAVINGS THIS CHECK ─── */}
                     <Card>
                         <div style={{ color: T.textMuted, fontSize: 11, fontWeight: 600, letterSpacing: 0.5, marginBottom: 12 }}>SAVINGS THIS CHECK</div>
                         {goals.filter((g) => g.is_active).map((goal) => (
@@ -788,6 +488,7 @@ export default function DashboardScreen() {
                 </>
             )}
 
+            {/* ─── COMING UP NEXT ─── */}
             {nextPeriod && (
                 <Card style={{ border: `1px solid ${T.purpleDim}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: displayNextPeriodBills.length > 0 ? 10 : 0 }}>
@@ -887,6 +588,7 @@ export default function DashboardScreen() {
                 </Card>
             )}
 
+            {/* ─── SAVINGS HISTORY ─── */}
             {periodHistory.length > 0 && (
                 <Card style={{ border: `1px solid ${T.greenDim}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>

@@ -32,23 +32,14 @@ const getUserDocRef = (uid) => doc(db, "users", uid);
 
 /** Load all user data from Firestore. Returns null if no data exists. */
 export async function loadUserData(uid) {
-    try {
-        const snap = await getDoc(getUserDocRef(uid));
-        if (snap.exists()) return snap.data();
-        return null;
-    } catch (e) {
-        console.error("loadUserData error:", e);
-        return null;
-    }
+    const snap = await getDoc(getUserDocRef(uid));
+    if (snap.exists()) return snap.data();
+    return null;
 }
 
-/** Save all user data to Firestore. */
+/** Save all user data to Firestore. Throws on failure. */
 export async function saveUserData(uid, data) {
-    try {
-        await setDoc(getUserDocRef(uid), data, { merge: true });
-    } catch (e) {
-        console.error("saveUserData error:", e);
-    }
+    await setDoc(getUserDocRef(uid), data, { merge: true });
 }
 
 /** Subscribe to real-time data changes (for cross-device sync).

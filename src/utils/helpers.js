@@ -107,3 +107,18 @@ export function validateGoalForm(form) {
         errors.per_check_amount = "Per-check amount must be greater than 0";
     return errors;
 }
+
+/** Debounce a function by `delay` milliseconds. */
+export function debounce(fn, delay) {
+    let timer = null;
+    const debounced = (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), delay);
+    };
+    debounced.cancel = () => clearTimeout(timer);
+    debounced.flush = (...args) => {
+        clearTimeout(timer);
+        fn(...args);
+    };
+    return debounced;
+}

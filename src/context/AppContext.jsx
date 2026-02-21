@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { initAuth, signIn, signOut, loadUserData, saveUserData, subscribeToData } from "../dataService";
 import { DEFAULT_SETTINGS, DEFAULT_BILLS, DEFAULT_GOALS, STORAGE_KEY } from "../constants/defaults";
+import { debounce } from "../utils/helpers";
 
 const AppContext = createContext(null);
 
@@ -29,6 +30,9 @@ export function AppProvider({ children }) {
     const [authLoading, setAuthLoading] = useState(true);
     const [authError, setAuthError] = useState(null);
 
+    // Save status for user feedback
+    const [saveError, setSaveError] = useState(null);
+
     // App data — initialize from local storage as fallback
     const saved = useMemo(() => loadLocalData(), []);
     const [settings, setSettings] = useState(saved?.settings || DEFAULT_SETTINGS);
@@ -40,8 +44,23 @@ export function AppProvider({ children }) {
     const [dataLoaded, setDataLoaded] = useState(false);
 
     // Guard to prevent save loops from remote sync updates
-    const skipNextSave = useRef(false);
+    const dataSource = useRef("local"); // 'local' | 'remote'
     const isInitialLoad = useRef(true);
+
+    // Debounced save to Firestore (500ms) — prevents save-on-every-keystroke
+    const debouncedSaveRef = useRef(null);
+    useEffect(() => {
+        debouncedSaveRef.current = debounce(async (uid, data) => {
+            try {
+                setSaveError(null);
+                await saveUserData(uid, data);
+            } catch (e) {
+                console.error("Save failed:", e);
+                setSaveError("Failed to save — your changes are saved locally and will sync when connection is restored.");
+            }
+        }, 500);
+        return () => debouncedSaveRef.current?.cancel();
+    }, []);
 
     // Listen for auth state changes
     useEffect(() => {
@@ -63,17 +82,22 @@ export function AppProvider({ children }) {
         let unsubscribe = null;
 
         (async () => {
-            const remote = await loadUserData(user.uid);
-            if (remote) {
-                skipNextSave.current = true;
-                setSettings(remote.settings || DEFAULT_SETTINGS);
-                setBills(remote.bills || DEFAULT_BILLS);
-                setGoals(remote.goals || DEFAULT_GOALS);
-                setAllocations(remote.allocations || {});
-                setPeriodHistory(remote.periodHistory || []);
-            } else {
-                // First sign-in: push local data to Firestore
-                await saveUserData(user.uid, { settings, bills, goals, allocations, periodHistory });
+            try {
+                const remote = await loadUserData(user.uid);
+                if (remote) {
+                    dataSource.current = "remote";
+                    setSettings(remote.settings || DEFAULT_SETTINGS);
+                    setBills(remote.bills || DEFAULT_BILLS);
+                    setGoals(remote.goals || DEFAULT_GOALS);
+                    setAllocations(remote.allocations || {});
+                    setPeriodHistory(remote.periodHistory || []);
+                } else {
+                    // First sign-in: push local data to Firestore
+                    await saveUserData(user.uid, { settings, bills, goals, allocations, periodHistory });
+                }
+            } catch (e) {
+                console.error("Initial data load failed:", e);
+                setSaveError("Could not load cloud data — using local data.");
             }
             setDataLoaded(true);
             isInitialLoad.current = false;
@@ -81,7 +105,7 @@ export function AppProvider({ children }) {
             // Subscribe to real-time changes (cross-device sync)
             unsubscribe = subscribeToData(user.uid, (data) => {
                 if (data) {
-                    skipNextSave.current = true;
+                    dataSource.current = "remote";
                     setSettings(data.settings || DEFAULT_SETTINGS);
                     setBills(data.bills || DEFAULT_BILLS);
                     setGoals(data.goals || DEFAULT_GOALS);
@@ -97,17 +121,23 @@ export function AppProvider({ children }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user]);
 
-    // Persist on every change — to both Firestore and localStorage
+    // Persist on every change — localStorage immediately, Firestore debounced
     useEffect(() => {
         if (isInitialLoad.current) return;
         const data = { settings, bills, goals, allocations, periodHistory };
+
+        // Always save locally immediately
         saveLocalData(data);
-        if (skipNextSave.current) {
-            skipNextSave.current = false;
+
+        // Skip Firestore save if data came from remote subscription
+        if (dataSource.current === "remote") {
+            dataSource.current = "local";
             return;
         }
-        if (user) {
-            saveUserData(user.uid, data);
+
+        // Debounced save to Firestore
+        if (user && debouncedSaveRef.current) {
+            debouncedSaveRef.current(user.uid, data);
         }
     }, [settings, bills, goals, allocations, periodHistory, user]);
 
@@ -123,10 +153,12 @@ export function AppProvider({ children }) {
     }, []);
 
     const handleSignOut = useCallback(async () => {
+        // Flush any pending saves before signing out
+        debouncedSaveRef.current?.flush(user?.uid, { settings, bills, goals, allocations, periodHistory });
         await signOut();
         setUser(null);
         setScreen("dashboard");
-    }, []);
+    }, [user, settings, bills, goals, allocations, periodHistory]);
 
     const handleReset = useCallback(() => {
         if (window.confirm("Reset all data to defaults? This cannot be undone.")) {
@@ -138,6 +170,8 @@ export function AppProvider({ children }) {
             localStorage.removeItem(STORAGE_KEY);
         }
     }, []);
+
+    const dismissSaveError = useCallback(() => setSaveError(null), []);
 
     const value = useMemo(
         () => ({
@@ -163,13 +197,16 @@ export function AppProvider({ children }) {
             setScreen,
             // Flags
             dataLoaded,
+            // Save status
+            saveError,
+            dismissSaveError,
             // Actions
             handleReset,
         }),
         [
             user, authLoading, authError, handleSignIn, handleSignOut,
             settings, bills, goals, allocations, periodHistory,
-            screen, dataLoaded, handleReset,
+            screen, dataLoaded, saveError, dismissSaveError, handleReset,
         ],
     );
 

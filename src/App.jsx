@@ -38,7 +38,7 @@ function LoadingView({ message = "Loading..." }) {
 }
 
 export default function App() {
-  const { user, authLoading, authError, handleSignIn, screen, setScreen, dataLoaded } = useApp();
+  const { user, authLoading, authError, handleSignIn, screen, setScreen, dataLoaded, saveError, dismissSaveError } = useApp();
 
   // Auth loading spinner
   if (authLoading) {
@@ -98,6 +98,35 @@ export default function App() {
             <h1 style={{ fontSize: 18, fontWeight: 700, letterSpacing: -0.3, margin: 0 }}>Paycheck Planner</h1>
             <Badge text="v2.0" color={T.accent} bg={T.accentDim} />
           </header>
+
+          {/* Save Error Banner */}
+          {saveError && (
+            <div
+              role="alert"
+              style={{
+                margin: "8px 18px 0",
+                padding: "10px 14px",
+                background: T.redDim,
+                border: `1px solid rgba(248,113,113,0.3)`,
+                borderRadius: T.radiusSm,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <span style={{ color: T.red, fontSize: 12 }}>{saveError}</span>
+              <button
+                onClick={dismissSaveError}
+                aria-label="Dismiss error"
+                style={{
+                  color: T.red, background: "none", border: "none",
+                  cursor: "pointer", fontSize: 14, padding: "2px 6px",
+                  flexShrink: 0,
+                }}
+              >✕</button>
+            </div>
+          )}
 
           {/* Content */}
           <main style={{ padding: "16px 18px 20px" }}>
