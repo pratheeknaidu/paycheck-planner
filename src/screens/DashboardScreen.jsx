@@ -18,9 +18,9 @@ export default function DashboardScreen() {
     const calc = usePeriodCalculations();
     const {
         currentPeriod, nextPeriod,
-        periodKey, nextPeriodKey,
-        periodAlloc, nextPeriodAlloc,
-        basePeriodBills, baseNextPeriodBills,
+        periodKey, nextPeriodKey, prevPeriodKey,
+        periodAlloc, nextPeriodAlloc, prevPeriodAlloc,
+        basePeriodBills, baseNextPeriodBills, carriedOverBills,
         periodBills, displayNextPeriodBills,
         billsTotal, savingsTotal, adjustments, adjustmentsTotal,
         netPay, hasPayOverride, remaining, isOver,
@@ -66,6 +66,28 @@ export default function DashboardScreen() {
         });
         if (changed) setAllocations((prev) => ({ ...prev, [nextPeriodKey]: updated }));
     }, [baseNextPeriodBills, nextPeriodKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Init allocations for carried-over bills (deferred/split from previous period)
+    useEffect(() => {
+        if (carriedOverBills.length === 0) return;
+        const existing = allocations[periodKey] || {};
+        const updated = { ...existing };
+        let changed = false;
+        carriedOverBills.forEach((bill) => {
+            if (!updated[bill.id]) {
+                const amt = bill._carryoverType === "split" ? bill._splitRemainder : bill.amount;
+                updated[bill.id] = {
+                    planned: amt,
+                    actual: bill.bill_type === "fixed" ? amt : null,
+                    paid: false,
+                    _carriedFrom: prevPeriodKey,
+                    _carryoverType: bill._carryoverType,
+                };
+                changed = true;
+            }
+        });
+        if (changed) setAllocations((prev) => ({ ...prev, [periodKey]: updated }));
+    }, [carriedOverBills, periodKey, prevPeriodKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─── LOCAL UI STATE ───
     const [editingNetPay, setEditingNetPay] = useState(false);
@@ -289,7 +311,11 @@ export default function DashboardScreen() {
                             const isDeferred = alloc.deferred;
                             const hasSplit = alloc.splitAmount != null;
                             const isPaidEarly = alloc.paidEarly;
-                            const displayAmt = hasSplit ? alloc.splitAmount : (alloc.actual ?? alloc.planned ?? bill.amount);
+                            const isCarryoverDeferred = bill._carryoverType === "deferred";
+                            const isCarryoverSplit = bill._carryoverType === "split";
+                            const displayAmt = isCarryoverSplit ? bill._splitRemainder
+                                : hasSplit ? alloc.splitAmount
+                                    : (alloc.actual ?? alloc.planned ?? bill.amount);
                             const isVariable = bill.bill_type === "variable";
                             const needsConfirm = isVariable && alloc.actual == null && !hasSplit && !isDeferred;
                             return (
@@ -324,6 +350,8 @@ export default function DashboardScreen() {
                                                 {isVariable && !hasSplit && !isDeferred && <Badge text="Variable" color={T.amber} bg={T.amberDim} />}
                                                 {isPaidEarly && <Badge text="Early" color={T.green} bg={T.greenDim} />}
                                                 {hasSplit && <Badge text={`Split · ${fmt(bill.amount - alloc.splitAmount)} next`} color={T.purple} bg={T.purpleDim} />}
+                                                {isCarryoverDeferred && <Badge text="Deferred ↓" color={T.amber} bg={T.amberDim} />}
+                                                {isCarryoverSplit && <Badge text={`Split remainder · ${fmt(bill._splitRemainder)}`} color={T.purple} bg={T.purpleDim} />}
                                             </div>
                                             <div style={{ color: T.textDim, fontSize: 11 }}>Due day {bill.due_day} · {bill.frequency}</div>
                                         </div>
