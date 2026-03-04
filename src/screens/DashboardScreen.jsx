@@ -18,7 +18,7 @@ export default function DashboardScreen() {
     const calc = usePeriodCalculations();
     const {
         currentPeriod, nextPeriod,
-        periodKey, nextPeriodKey,
+        periodKey, nextPeriodKey, prevPeriodKey,
         periodAlloc, nextPeriodAlloc,
         basePeriodBills, baseNextPeriodBills, carriedOverBills,
         periodBills, displayNextPeriodBills,
@@ -66,6 +66,74 @@ export default function DashboardScreen() {
         });
         if (changed) setAllocations((prev) => ({ ...prev, [nextPeriodKey]: updated }));
     }, [baseNextPeriodBills, nextPeriodKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // One-time migration: recover old-format carryover data from previous period
+    // Scans prevPeriodAlloc for splitAmount/deferred/paidEarly flags that were set
+    // before the action-time materialization fix, and writes new-format markers
+    // into the current period's allocation so they appear correctly.
+    useEffect(() => {
+        if (!prevPeriodKey) return;
+        const prevAlloc = allocations[prevPeriodKey] || {};
+        const currAlloc = allocations[periodKey] || {};
+        const updated = { ...currAlloc };
+        let changed = false;
+        bills.filter((b) => b.is_active).forEach((bill) => {
+            const pa = prevAlloc[bill.id];
+            if (!pa) return;
+            // Skip if current period already has new-format markers for this bill
+            if (updated[bill.id]?._deferredFrom || updated[bill.id]?._splitFrom || updated[bill.id]?._splitRemainder != null || updated[bill.id]?._paidEarlyFrom) return;
+            // Migrate deferred
+            if (pa.deferred && !updated[bill.id]?._deferredFrom) {
+                updated[bill.id] = {
+                    ...(updated[bill.id] || {}),
+                    planned: bill.amount,
+                    actual: bill.bill_type === "fixed" ? bill.amount : null,
+                    paid: false,
+                    _deferredFrom: prevPeriodKey,
+                };
+                changed = true;
+            }
+            // Migrate split remainder
+            if (pa.splitAmount != null && !updated[bill.id]?._splitRemainder) {
+                const remainder = bill.amount - pa.splitAmount;
+                updated[bill.id] = {
+                    ...(updated[bill.id] || {}),
+                    planned: remainder,
+                    actual: bill.bill_type === "fixed" ? remainder : null,
+                    paid: false,
+                    _splitRemainder: remainder,
+                    _splitFrom: prevPeriodKey,
+                };
+                changed = true;
+            }
+            // Migrate full paidEarly
+            if (pa.paidEarly && pa.prepayAmount == null && !updated[bill.id]?._paidEarlyFull) {
+                updated[bill.id] = {
+                    ...(updated[bill.id] || {}),
+                    planned: 0,
+                    actual: 0,
+                    paid: true,
+                    _paidEarlyFull: true,
+                    _paidEarlyFrom: prevPeriodKey,
+                };
+                changed = true;
+            }
+            // Migrate partial prepay
+            if (pa.paidEarly && pa.prepayAmount != null && !updated[bill.id]?._paidEarlyFrom) {
+                const remainder = bill.amount - pa.prepayAmount;
+                updated[bill.id] = {
+                    ...(updated[bill.id] || {}),
+                    planned: remainder,
+                    actual: bill.bill_type === "fixed" ? remainder : null,
+                    paid: false,
+                    _paidEarlyFrom: prevPeriodKey,
+                    _prepaidAmount: pa.prepayAmount,
+                };
+                changed = true;
+            }
+        });
+        if (changed) setAllocations((prev) => ({ ...prev, [periodKey]: updated }));
+    }, [prevPeriodKey, periodKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─── LOCAL UI STATE ───
     const [editingNetPay, setEditingNetPay] = useState(false);
