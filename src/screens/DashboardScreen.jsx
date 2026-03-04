@@ -18,8 +18,8 @@ export default function DashboardScreen() {
     const calc = usePeriodCalculations();
     const {
         currentPeriod, nextPeriod,
-        periodKey, nextPeriodKey, prevPeriodKey,
-        periodAlloc, nextPeriodAlloc, prevPeriodAlloc,
+        periodKey, nextPeriodKey,
+        periodAlloc, nextPeriodAlloc,
         basePeriodBills, baseNextPeriodBills, carriedOverBills,
         periodBills, displayNextPeriodBills,
         billsTotal, savingsTotal, adjustments, adjustmentsTotal,
@@ -27,7 +27,7 @@ export default function DashboardScreen() {
         paidCount, isClosed, nextBillsTotal,
     } = calc;
 
-    const actions = useAllocationActions(periodKey);
+    const actions = useAllocationActions(periodKey, nextPeriodKey);
     const {
         togglePaid, updateActual,
         deferBill, undoDefer,
@@ -67,28 +67,6 @@ export default function DashboardScreen() {
         if (changed) setAllocations((prev) => ({ ...prev, [nextPeriodKey]: updated }));
     }, [baseNextPeriodBills, nextPeriodKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Init allocations for carried-over bills (deferred/split from previous period)
-    useEffect(() => {
-        if (carriedOverBills.length === 0) return;
-        const existing = allocations[periodKey] || {};
-        const updated = { ...existing };
-        let changed = false;
-        carriedOverBills.forEach((bill) => {
-            if (!updated[bill.id]) {
-                const amt = bill._carryoverType === "split" ? bill._splitRemainder : bill.amount;
-                updated[bill.id] = {
-                    planned: amt,
-                    actual: bill.bill_type === "fixed" ? amt : null,
-                    paid: false,
-                    _carriedFrom: prevPeriodKey,
-                    _carryoverType: bill._carryoverType,
-                };
-                changed = true;
-            }
-        });
-        if (changed) setAllocations((prev) => ({ ...prev, [periodKey]: updated }));
-    }, [carriedOverBills, periodKey, prevPeriodKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
     // ─── LOCAL UI STATE ───
     const [editingNetPay, setEditingNetPay] = useState(false);
     const [netPayInput, setNetPayInput] = useState("");
@@ -115,7 +93,7 @@ export default function DashboardScreen() {
 
     const confirmSplit = () => {
         if (splittingBill && splitValue) {
-            splitBill(splittingBill.id, splitValue, splittingBillPK);
+            splitBill(splittingBill.id, splitValue, splittingBill, splittingBillPK);
             setSplittingBill(null);
         }
     };
@@ -376,7 +354,7 @@ export default function DashboardScreen() {
                                                 bill={bill}
                                                 alloc={alloc}
                                                 onOpenSplit={openSplit}
-                                                onDefer={deferBill}
+                                                onDefer={(billId) => deferBill(billId, bill)}
                                                 onUndoDefer={undoDefer}
                                                 onUndoSplit={undoSplit}
                                                 actionMenu={actionMenu}

@@ -6,8 +6,9 @@ import { getPayPeriods, billFallsInPeriod } from "../utils/helpers";
  * Custom hook that encapsulates all pay-period and bill calculation logic.
  * Returns derived data (totals, period bills, flags) from raw state.
  *
- * Includes previous-period lookback so that deferred, split, and prepaid
- * bills carry over correctly when a new period becomes current.
+ * Carryover data (deferred, split, paid-early) is materialized into each
+ * period's allocation by useAllocationActions, so this hook simply reads
+ * the markers to include/exclude/adjust bills.
  */
 export function usePeriodCalculations() {
     const { settings, bills, goals, allocations } = useApp();
@@ -23,7 +24,6 @@ export function usePeriodCalculations() {
     const prevPeriodKey = prevPeriod ? prevPeriod.start.toISOString().slice(0, 10) : null;
     const periodAlloc = allocations[periodKey] || {};
     const nextPeriodAlloc = nextPeriodKey ? allocations[nextPeriodKey] || {} : {};
-    const prevPeriodAlloc = prevPeriodKey ? allocations[prevPeriodKey] || {} : {};
 
     // Base bills for each period (before split/defer/payEarly adjustments)
     const basePeriodBills = useMemo(
@@ -36,44 +36,39 @@ export function usePeriodCalculations() {
         [bills, nextPeriod],
     );
 
-    // ─── CARRYOVER FROM PREVIOUS PERIOD ───
-    // Bills that were deferred / split / partially prepaid from the previous period
-    // and should appear in the current period even if they don't naturally fall here.
+    // ─── CARRYOVER BILLS ───
+    // Bills that have carryover markers in the current period's allocation
+    // (written by useAllocationActions when defer/split/payEarly was performed in the prev period)
     const carriedOverBills = useMemo(() => {
-        if (!prevPeriodKey) return [];
         const carried = [];
         const activeBills = bills.filter((b) => b.is_active);
         for (const bill of activeBills) {
-            const pa = prevPeriodAlloc[bill.id];
-            if (!pa) continue;
-            // Already naturally in this period? Skip — we handle amount adjustment below.
-            const alreadyInPeriod = basePeriodBills.some((b) => b.id === bill.id);
+            const a = periodAlloc[bill.id];
+            if (!a) continue;
+            const alreadyInBase = basePeriodBills.some((b) => b.id === bill.id);
+            if (alreadyInBase) continue;
 
-            if (pa.deferred && !alreadyInPeriod) {
+            if (a._deferredFrom) {
                 carried.push({ ...bill, _carryoverType: "deferred" });
-            } else if (pa.splitAmount != null && !alreadyInPeriod) {
-                carried.push({ ...bill, _carryoverType: "split", _splitRemainder: bill.amount - pa.splitAmount });
+            } else if (a._splitRemainder != null) {
+                carried.push({ ...bill, _carryoverType: "split", _splitRemainder: a._splitRemainder });
             }
-            // Full paidEarly from prev period — bill was already paid, don't carry over
-            // Partial prepay — the bill naturally falls in current period; amount adjustment handled in getBillAmount
+            // _paidEarlyFull bills are already marked as paid, they won't appear
         }
         return carried;
-    }, [prevPeriodKey, prevPeriodAlloc, bills, basePeriodBills]);
+    }, [bills, periodAlloc, basePeriodBills]);
 
     // Effective current period bills: exclude deferred, include paidEarly from next period, include carryovers
     const paidEarlyBills = baseNextPeriodBills.filter((b) => periodAlloc[b.id]?.paidEarly);
     const periodBills = useMemo(() => {
         const nonDeferred = basePeriodBills.filter((b) => !periodAlloc[b.id]?.deferred);
-        // Exclude bills that were fully paid early from the previous period
-        const nonPaidEarlyFromPrev = nonDeferred.filter((b) => {
-            const pa = prevPeriodAlloc[b.id];
-            return !(pa?.paidEarly && pa?.prepayAmount == null);
-        });
-        const extras = paidEarlyBills.filter((b) => !nonPaidEarlyFromPrev.some((nb) => nb.id === b.id));
+        // Exclude bills that were fully paid early from a previous period
+        const nonPaidEarlyFull = nonDeferred.filter((b) => !periodAlloc[b.id]?._paidEarlyFull);
+        const extras = paidEarlyBills.filter((b) => !nonPaidEarlyFull.some((nb) => nb.id === b.id));
         // Add carried-over bills (deferred/split from prev period, not already present)
-        const carryExtras = carriedOverBills.filter((b) => !nonPaidEarlyFromPrev.some((nb) => nb.id === b.id));
-        return [...nonPaidEarlyFromPrev, ...extras, ...carryExtras];
-    }, [basePeriodBills, periodAlloc, paidEarlyBills, carriedOverBills, prevPeriodAlloc]);
+        const carryExtras = carriedOverBills.filter((b) => !nonPaidEarlyFull.some((nb) => nb.id === b.id));
+        return [...nonPaidEarlyFull, ...extras, ...carryExtras];
+    }, [basePeriodBills, periodAlloc, paidEarlyBills, carriedOverBills]);
 
     // Effective next period bills: exclude paidEarly, include deferred + split remainders
     const deferredBills = basePeriodBills.filter((b) => periodAlloc[b.id]?.deferred);
@@ -93,24 +88,20 @@ export function usePeriodCalculations() {
     const getBillAmount = useCallback((bill) => {
         const a = periodAlloc[bill.id];
 
-        // Handle carryover bills from previous period
-        if (bill._carryoverType === "deferred") {
-            // Deferred bill: full amount, unless current period has its own override
-            if (a?.actual != null) return Number(a.actual);
-            return bill.amount;
-        }
+        // Carryover bill from previous period — use the persisted planned/actual amounts
         if (bill._carryoverType === "split") {
-            // Split remainder from previous period
             if (a?.actual != null) return Number(a.actual);
-            return bill._splitRemainder;
+            return a?._splitRemainder ?? bill._splitRemainder;
+        }
+        if (bill._carryoverType === "deferred") {
+            if (a?.actual != null) return Number(a.actual);
+            return a?.planned ?? bill.amount;
         }
 
-        // Handle bills that naturally fall in this period but were partially prepaid from prev period
-        const pa = prevPeriodAlloc[bill.id];
-        if (pa?.paidEarly && pa?.prepayAmount != null) {
-            // Partial prepay: reduce by the prepaid amount
-            const base = a?.actual != null ? Number(a.actual) : bill.amount;
-            return base - pa.prepayAmount;
+        // Bill with partial prepay from prev period
+        if (a?._paidEarlyFrom && a?._prepaidAmount != null) {
+            if (a.actual != null) return Number(a.actual);
+            return a.planned ?? (bill.amount - a._prepaidAmount);
         }
 
         if (!a) return bill.amount;
@@ -118,7 +109,7 @@ export function usePeriodCalculations() {
         if (a.splitAmount != null) return a.splitAmount;
         if (a.paidEarly && a.prepayAmount != null) return a.prepayAmount;
         return a.actual ?? a.planned ?? bill.amount;
-    }, [periodAlloc, prevPeriodAlloc]);
+    }, [periodAlloc]);
 
     const billsTotal = periodBills.reduce((s, b) => s + getBillAmount(b), 0);
     const savingsTotal = goals.filter((g) => g.is_active).reduce((s, g) => s + g.per_check_amount, 0);
@@ -152,7 +143,7 @@ export function usePeriodCalculations() {
     return {
         periods, currentPeriod, nextPeriod, prevPeriod,
         periodKey, nextPeriodKey, prevPeriodKey,
-        periodAlloc, nextPeriodAlloc, prevPeriodAlloc,
+        periodAlloc, nextPeriodAlloc,
         basePeriodBills, baseNextPeriodBills, carriedOverBills,
         periodBills, displayNextPeriodBills,
         getBillAmount, getNextBillAmount,
