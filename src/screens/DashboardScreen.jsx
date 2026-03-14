@@ -39,7 +39,7 @@ export default function DashboardScreen() {
     } = actions;
 
     // Init allocations for current period bills + migrate old carryover data in ONE atomic write
-    // (combining them prevents a race condition where two effects overwrite each other)
+    // Scans ALL previous periods (not just one back) for old-format adjustment flags
     useEffect(() => {
         setAllocations((prev) => {
             const existing = prev[periodKey] || {};
@@ -54,56 +54,71 @@ export default function DashboardScreen() {
                 }
             });
 
-            // 2. Migrate old-format carryover from previous period
-            if (prevPeriodKey) {
-                const prevAlloc = prev[prevPeriodKey] || {};
+            // 2. Migrate old-format carryover from ANY previous period
+            // Find all period keys that are before the current one, sorted most-recent-first
+            const allPeriodKeys = Object.keys(prev)
+                .filter((k) => k < periodKey && k.match(/^\d{4}-\d{2}-\d{2}$/))
+                .sort((a, b) => b.localeCompare(a)); // most recent first
+
+            if (allPeriodKeys.length > 0) {
                 bills.filter((b) => b.is_active).forEach((bill) => {
-                    const pa = prevAlloc[bill.id];
-                    if (!pa) return;
-                    // Skip if already migrated
+                    // Skip if already has new-format markers
                     if (updated[bill.id]?._deferredFrom || updated[bill.id]?._splitFrom || updated[bill.id]?._splitRemainder != null || updated[bill.id]?._paidEarlyFrom) return;
 
-                    if (pa.deferred) {
-                        updated[bill.id] = {
-                            ...(updated[bill.id] || {}),
-                            planned: bill.amount,
-                            actual: bill.bill_type === "fixed" ? bill.amount : null,
-                            paid: false,
-                            _deferredFrom: prevPeriodKey,
-                        };
-                        changed = true;
-                    } else if (pa.splitAmount != null) {
-                        const remainder = bill.amount - pa.splitAmount;
-                        updated[bill.id] = {
-                            ...(updated[bill.id] || {}),
-                            planned: remainder,
-                            actual: bill.bill_type === "fixed" ? remainder : null,
-                            paid: false,
-                            _splitRemainder: remainder,
-                            _splitFrom: prevPeriodKey,
-                        };
-                        changed = true;
-                    } else if (pa.paidEarly && pa.prepayAmount == null) {
-                        updated[bill.id] = {
-                            ...(updated[bill.id] || {}),
-                            planned: 0,
-                            actual: 0,
-                            paid: true,
-                            _paidEarlyFull: true,
-                            _paidEarlyFrom: prevPeriodKey,
-                        };
-                        changed = true;
-                    } else if (pa.paidEarly && pa.prepayAmount != null) {
-                        const remainder = bill.amount - pa.prepayAmount;
-                        updated[bill.id] = {
-                            ...(updated[bill.id] || {}),
-                            planned: remainder,
-                            actual: bill.bill_type === "fixed" ? remainder : null,
-                            paid: false,
-                            _paidEarlyFrom: prevPeriodKey,
-                            _prepaidAmount: pa.prepayAmount,
-                        };
-                        changed = true;
+                    // Find the most recent previous period with an old-format flag for this bill
+                    for (const pk of allPeriodKeys) {
+                        const pa = prev[pk]?.[bill.id];
+                        if (!pa) continue;
+
+                        if (pa.deferred) {
+                            updated[bill.id] = {
+                                ...(updated[bill.id] || {}),
+                                planned: bill.amount,
+                                actual: bill.bill_type === "fixed" ? bill.amount : null,
+                                paid: false,
+                                _deferredFrom: pk,
+                            };
+                            changed = true;
+                            break;
+                        } else if (pa.splitAmount != null) {
+                            const remainder = bill.amount - pa.splitAmount;
+                            updated[bill.id] = {
+                                ...(updated[bill.id] || {}),
+                                planned: remainder,
+                                actual: bill.bill_type === "fixed" ? remainder : null,
+                                paid: false,
+                                _splitRemainder: remainder,
+                                _splitFrom: pk,
+                            };
+                            changed = true;
+                            break;
+                        } else if (pa.paidEarly && pa.prepayAmount == null) {
+                            updated[bill.id] = {
+                                ...(updated[bill.id] || {}),
+                                planned: 0,
+                                actual: 0,
+                                paid: true,
+                                _paidEarlyFull: true,
+                                _paidEarlyFrom: pk,
+                            };
+                            changed = true;
+                            break;
+                        } else if (pa.paidEarly && pa.prepayAmount != null) {
+                            const remainder = bill.amount - pa.prepayAmount;
+                            updated[bill.id] = {
+                                ...(updated[bill.id] || {}),
+                                planned: remainder,
+                                actual: bill.bill_type === "fixed" ? remainder : null,
+                                paid: false,
+                                _paidEarlyFrom: pk,
+                                _prepaidAmount: pa.prepayAmount,
+                            };
+                            changed = true;
+                            break;
+                        }
+                        // If this period has a normal entry (no flags), stop looking further back
+                        // — it means the bill was handled normally in this period
+                        if (pa.planned != null || pa.actual != null) break;
                     }
                 });
             }
@@ -111,7 +126,7 @@ export default function DashboardScreen() {
             if (!changed) return prev;
             return { ...prev, [periodKey]: updated };
         });
-    }, [basePeriodBills, periodKey, prevPeriodKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [basePeriodBills, periodKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Init allocations for next period bills
     useEffect(() => {
